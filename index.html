@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Offline Portable Whisper</title>
+  
+  <style>
+    body { 
+      font-family: system-ui, -apple-system, sans-serif; 
+      max-width: 800px; 
+      margin: 40px auto; 
+      padding: 0 20px; 
+      color: #1e293b;
+    }
+    
+    #output { 
+      white-space: pre-wrap; 
+      background: #0f172a; 
+      color: #f8fafc; 
+      padding: 18px; 
+      border-radius: 6px; 
+      min-height: 120px; 
+      font-family: monospace; 
+      box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    button { 
+      padding: 10px 20px; 
+      cursor: pointer; 
+      background: #2563eb; 
+      color: white; 
+      font-weight: 600;
+      border: none; 
+      border-radius: 6px; 
+      transition: background 0.2s;
+    }
+
+    button:disabled { 
+      background: #93c5fd; 
+      cursor: not-allowed; 
+    }
+
+    /* Progress UI Styles */
+    #progress-container { 
+      width: 100%; 
+      background-color: #e2e8f0; 
+      border-radius: 999px; 
+      overflow: hidden; 
+      margin: 15px 0 5px 0; 
+      display: none; /* Hidden by default until loading starts */
+      height: 12px;
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);
+    }
+    
+    #progress-bar { 
+      height: 100%; 
+      background-color: #3b82f6; 
+      width: 0%; 
+      transition: width 0.1s linear; 
+    }
+
+    #progress-details { 
+      font-size: 13px; 
+      color: #64748b; 
+      margin-bottom: 25px;
+      font-family: monospace;
+      min-height: 20px; /* Prevents layout shifting */
+    }
+    
+    .status-badge {
+      font-weight: 600;
+      color: #2563eb;
+    }
+  </style>
+</head>
+<body>
+  <h2>100% Offline Local Transcriber</h2>
+  
+  <div style="margin-bottom: 20px;">
+    <input type="file" id="audioInput" accept="audio/*,video/*" />
+    <button id="transcribeBtn" disabled>Initializing...</button>
+  </div>
+  
+  <p><strong>Status:</strong> <span id="status" class="status-badge">Preparing engine...</span></p>
+  
+  <div id="progress-container">
+    <div id="progress-bar"></div>
+  </div>
+  <div id="progress-details"></div>
+  
+  <h3>Transcript</h3>
+  <div id="output">Audio transcript will appear here...</div>
+
+  <script type="module">
+    import { pipeline, env } from '@huggingface/transformers';
+
+    // ---------------------------------------------------------
+    // OFFLINE CONFIGURATION OVERRIDES
+    // ---------------------------------------------------------
+    env.allowRemoteModels = false;
+    env.allowLocalModels = true;
+    env.localModelPath = '/models/';
+    env.backends.onnx.wasm.wasmPaths = '/wasm/';
+    // ---------------------------------------------------------
+
+    const statusEl = document.getElementById('status');
+    const transcribeBtn = document.getElementById('transcribeBtn');
+    const outputEl = document.getElementById('output');
+    
+    const progressContainer = document.getElementById('progress-container');
+    const progressBar = document.getElementById('progress-bar');
+    const progressDetails = document.getElementById('progress-details');
+
+    let transcriber = null;
+
+    async function initEngine() {
+      try {
+        statusEl.textContent = 'Loading offline AI models...';
+        progressContainer.style.display = 'block';
+
+        transcriber = await pipeline('automatic-speech-recognition', 'Xenova/whisper-base', {
+          device: 'webgpu', // Gracefully falls back to WASM
+          
+          // The progress_callback catches live updates from Transformers.js
+          progress_callback: (data) => {
+            if (data.status === 'initiate') {
+              progressDetails.textContent = `Finding local file: ${data.file}`;
+            } else if (data.status === 'progress') {
+              // Update the visual bar and text percentage for the current file
+              const currentProgress = data.progress || 0;
+              progressBar.style.width = `${currentProgress}%`;
+              progressDetails.textContent = `Loading ${data.file} into memory... ${Math.round(currentProgress)}%`;
+            } else if (data.status === 'done') {
+              progressDetails.textContent = `Successfully loaded ${data.file}`;
+            } else if (data.status === 'ready') {
+              // All files finished loading
+              progressContainer.style.display = 'none';
+              progressDetails.textContent = 'All models loaded into memory.';
+            }
+          }
+        });
+
+        statusEl.textContent = 'Ready (Offline Mode)!';
+        statusEl.style.color = '#16a34a'; // Turn status green
+        progressContainer.style.display = 'none';
+        
+        transcribeBtn.disabled = false;
+        transcribeBtn.textContent = 'Transcribe Audio';
+      } catch (err) {
+        statusEl.textContent = 'Error loading models.';
+        statusEl.style.color = '#dc2626'; // Turn status red
+        progressDetails.textContent = err.message;
+        console.error(err);
+      }
+    }
+
+    transcribeBtn.addEventListener('click', async () => {
+      const file = document.getElementById('audioInput').files[0];
+      if (!file) return alert('Please select an audio file first.');
+
+      statusEl.textContent = 'Processing audio locally...';
+      statusEl.style.color = '#2563eb';
+      transcribeBtn.disabled = true;
+      outputEl.textContent = 'Transcribing... (This may take a moment depending on file size)';
+
+      try {
+        const fileUrl = URL.createObjectURL(file);
+        
+        // Run the Whisper model
+        const result = await transcriber(fileUrl, {
+          chunk_length_s: 30,
+          stride_length_s: 5,
+        });
+        
+        outputEl.textContent = result.text;
+        statusEl.textContent = 'Complete!';
+        statusEl.style.color = '#16a34a';
+      } catch (err) {
+        statusEl.textContent = 'Transcription failed.';
+        statusEl.style.color = '#dc2626';
+        outputEl.textContent = 'Error: ' + err.message;
+      } finally {
+        transcribeBtn.disabled = false;
+      }
+    });
+
+    // Boot the engine on page load
+    initEngine();
+  </script>
+</body>
+</html>
