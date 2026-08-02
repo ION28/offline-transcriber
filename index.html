@@ -180,9 +180,24 @@
         progressBar.style.width = '0%';
         progressDetails.textContent = 'Initializing...';
 
+        // --- NEW: Free up GPU memory from the old model before loading a new one ---
+        if (transcriber) {
+          progressDetails.textContent = 'Unloading previous model from memory...';
+          await transcriber.dispose();
+          transcriber = null;
+        }
+        // -------------------------------------------------------------------------
+
         const selectedModel = modelSelect.value;
 
         transcriber = await pipeline('automatic-speech-recognition', selectedModel, {
+          device: 'webgpu', // Gracefully falls back to WASM
+          progress_callback: (data) => {
+            if (data.status === 'progress') {
+              progressContainer.style.display = 'block';
+              progressBar.style.width = `${Math.round(data.progress)}%`;
+              progressDetails.textContent = `Loading ${data.file}... (${Math.round(data.progress)}%)`;
+            } else if (data.status === 'done') {
               progressDetails.textContent = `Successfully loaded ${data.file}`;
             } else if (data.status === 'ready') {
               // All files finished loading
