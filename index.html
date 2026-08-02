@@ -71,11 +71,63 @@
       font-weight: 600;
       color: #2563eb;
     }
+
+    .settings-panel {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      padding: 15px;
+      border-radius: 6px;
+      margin-bottom: 20px;
+    }
+
+    .setting-group {
+      margin-bottom: 12px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .setting-group:last-child {
+      margin-bottom: 0;
+    }
+
+    .setting-group label {
+      font-weight: 600;
+      font-size: 14px;
+      margin-bottom: 6px;
+      color: #334155;
+    }
+
+    select, textarea {
+      padding: 8px 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 14px;
+    }
+
+    textarea {
+      resize: vertical;
+    }
   </style>
 </head>
 <body>
   <h2>100% Offline Local Transcriber</h2>
   
+  <div class="settings-panel">
+    <div class="setting-group">
+      <label for="modelSelect">AI Model Size:</label>
+      <select id="modelSelect">
+        <option value="Xenova/whisper-tiny">Tiny (~60MB - Fastest)</option>
+        <option value="Xenova/whisper-base" selected>Base (~130MB - Balanced)</option>
+        <option value="Xenova/whisper-small">Small (~240MB - Most Accurate)</option>
+      </select>
+    </div>
+    <div class="setting-group">
+      <label for="promptInput">Context / Vocabulary (Optional):</label>
+      <textarea id="promptInput" rows="2" placeholder="e.g., PostgreSQL, gRPC, Kubernetes. Helps the AI recognize specific jargon."></textarea>
+    </div>
+  </div>
+
   <div style="margin-bottom: 20px;">
     <input type="file" id="audioInput" accept="audio/*,video/*" />
     <button id="transcribeBtn" disabled>Initializing...</button>
@@ -107,6 +159,9 @@
     const transcribeBtn = document.getElementById('transcribeBtn');
     const outputEl = document.getElementById('output');
     
+    const modelSelect = document.getElementById('modelSelect');
+    const promptInput = document.getElementById('promptInput');
+
     const progressContainer = document.getElementById('progress-container');
     const progressBar = document.getElementById('progress-bar');
     const progressDetails = document.getElementById('progress-details');
@@ -115,22 +170,19 @@
 
     async function initEngine() {
       try {
+        // Disable button while loading a new model
+        transcribeBtn.disabled = true;
+        transcribeBtn.textContent = 'Loading Model...';
+        
         statusEl.textContent = 'Loading offline AI models...';
+        statusEl.style.color = '#2563eb';
         progressContainer.style.display = 'block';
+        progressBar.style.width = '0%';
+        progressDetails.textContent = 'Initializing...';
 
-        transcriber = await pipeline('automatic-speech-recognition', 'Xenova/whisper-base', {
-          device: 'webgpu', // Gracefully falls back to WASM
-          
-          // The progress_callback catches live updates from Transformers.js
-          progress_callback: (data) => {
-            if (data.status === 'initiate') {
-              progressDetails.textContent = `Finding local file: ${data.file}`;
-            } else if (data.status === 'progress') {
-              // Update the visual bar and text percentage for the current file
-              const currentProgress = data.progress || 0;
-              progressBar.style.width = `${currentProgress}%`;
-              progressDetails.textContent = `Loading ${data.file} into memory... ${Math.round(currentProgress)}%`;
-            } else if (data.status === 'done') {
+        const selectedModel = modelSelect.value;
+
+        transcriber = await pipeline('automatic-speech-recognition', selectedModel, {
               progressDetails.textContent = `Successfully loaded ${data.file}`;
             } else if (data.status === 'ready') {
               // All files finished loading
@@ -147,12 +199,16 @@
         transcribeBtn.disabled = false;
         transcribeBtn.textContent = 'Transcribe Audio';
       } catch (err) {
-        statusEl.textContent = 'Error loading models.';
+        statusEl.textContent = 'Error loading model (Did you download it?).';
         statusEl.style.color = '#dc2626'; // Turn status red
         progressDetails.textContent = err.message;
         console.error(err);
       }
     }
+
+    modelSelect.addEventListener('change', () => {
+      initEngine();
+    });
 
     transcribeBtn.addEventListener('click', async () => {
       const file = document.getElementById('audioInput').files[0];
@@ -165,12 +221,19 @@
 
       try {
         const fileUrl = URL.createObjectURL(file);
+        const promptText = promptInput.value.trim();
         
-        // Run the Whisper model
-        const result = await transcriber(fileUrl, {
+        const options = {
           chunk_length_s: 30,
           stride_length_s: 5,
-        });
+        };
+
+        // Pass the custom vocabulary to guide transcription
+        if (promptText) {
+            options.prompt = promptText;
+        }
+
+        const result = await transcriber(fileUrl, options);
         
         outputEl.textContent = result.text;
         statusEl.textContent = 'Complete!';
